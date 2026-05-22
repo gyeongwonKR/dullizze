@@ -19,6 +19,7 @@ SYSTEM = """너는 한국어 정보/지식형 YouTube 쇼츠 작가다.
 - 강한 훅으로 시작(첫 문장에서 호기심 유발), 흥미로운 사실 위주 본문, 짧은 마무리(CTA).
 - 팩트는 정확하게. 추측이면 단정하지 말 것.
 - visual_prompts는 영어로, 각 장면을 묘사하는 이미지 생성 프롬프트. 세로 9:16, 시네마틱.
+- headline_main/headline_accent는 영상 상단에 띄울 2줄짜리 온스크린 헤드라인이다(유튜브 제목과 별개). 각 줄 한국어 12자 이내로 짧고 강하게. main은 도입, accent는 결정타.
 
 반드시 아래 JSON만 출력(코드블록/설명 금지):
 {
@@ -26,6 +27,8 @@ SYSTEM = """너는 한국어 정보/지식형 YouTube 쇼츠 작가다.
   "hook": "첫 훅 문장",
   "cta": "마무리 문장",
   "visual_prompts": ["english prompt 1", "... 총 %d개"],
+  "headline_main": "온스크린 헤드라인 1줄 (≤12자)",
+  "headline_accent": "온스크린 헤드라인 2줄, 강조색 (≤12자)",
   "title": "유튜브 제목 (40자 이내)",
   "tags": ["태그", "..."],
   "description": "유튜브 설명 (2~3문장)"
@@ -85,8 +88,8 @@ def _usage_dict(usage: object | None) -> dict[str, int]:
     return result
 
 
-def _estimate_cost_usd(usage: dict[str, int]) -> float | None:
-    if not config.CLAUDE_MODEL.startswith("claude-haiku-4-5"):
+def _estimate_cost_usd(usage: dict[str, int], model: str) -> float | None:
+    if not model.startswith("claude-haiku-4-5"):
         return None
     cost = 0.0
     for field, price in HAIKU_4_5_PRICING_USD_PER_MTOK.items():
@@ -94,25 +97,22 @@ def _estimate_cost_usd(usage: dict[str, int]) -> float | None:
     return round(cost, 8)
 
 
-def _write_usage_log(out_dir: Path, usage: object | None) -> None:
+def _write_usage_log(out_dir: Path, usage: object | None, model: str) -> None:
     usage_data = _usage_dict(usage)
     cache_tokens = usage_data["cache_creation_input_tokens"] + usage_data["cache_read_input_tokens"]
+    is_haiku = model.startswith("claude-haiku-4-5")
     payload = {
-        "model": config.CLAUDE_MODEL,
+        "model": model,
         "prompt_cache_enabled": config.CLAUDE_PROMPT_CACHE,
         "prompt_cache_type": "ephemeral" if config.CLAUDE_PROMPT_CACHE else None,
-        "prompt_cache_min_tokens": HAIKU_4_5_CACHE_MIN_TOKENS
-        if config.CLAUDE_MODEL.startswith("claude-haiku-4-5")
-        else None,
+        "prompt_cache_min_tokens": HAIKU_4_5_CACHE_MIN_TOKENS if is_haiku else None,
         "prompt_cache_note": "Haiku 4.5는 4096토큰 이상 프롬프트만 실제 캐시됩니다."
-        if config.CLAUDE_MODEL.startswith("claude-haiku-4-5")
+        if is_haiku
         else None,
         "prompt_cache_used": cache_tokens > 0,
         "usage": usage_data,
-        "pricing_usd_per_mtok": HAIKU_4_5_PRICING_USD_PER_MTOK
-        if config.CLAUDE_MODEL.startswith("claude-haiku-4-5")
-        else None,
-        "estimated_cost_usd": _estimate_cost_usd(usage_data),
+        "pricing_usd_per_mtok": HAIKU_4_5_PRICING_USD_PER_MTOK if is_haiku else None,
+        "estimated_cost_usd": _estimate_cost_usd(usage_data, model),
     }
     log_path = out_dir / "logs" / "script_usage.json"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +127,7 @@ def _write_usage_log(out_dir: Path, usage: object | None) -> None:
     )
 
 
-def generate(topic: str, out_dir: Path, tone: str | None = None) -> dict:
+def generate(topic: str, out_dir: Path, tone: str | None = None, model: str | None = None) -> dict:
     """주제 → script.json. 이미 있으면 재사용(멱등)."""
     out = out_dir / "script.json"
     if out.exists():
@@ -137,9 +137,10 @@ def generate(topic: str, out_dir: Path, tone: str | None = None) -> dict:
         raise RuntimeError("ANTHROPIC_API_KEY가 .env에 설정되지 않았습니다.")
 
     tone = tone or config.DEFAULT_TONE
+    model = config.normalize_model(model)
     client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
     msg = client.messages.create(
-        model=config.CLAUDE_MODEL,
+        model=model,
         max_tokens=2000,
         system=_system_prompt(),
         messages=[
@@ -149,7 +150,7 @@ def generate(topic: str, out_dir: Path, tone: str | None = None) -> dict:
             }
         ],
     )
-    _write_usage_log(out_dir, msg.usage)
+    _write_usage_log(out_dir, msg.usage, model)
     data = _extract_json(msg.content[0].text)
     data["topic"] = topic
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

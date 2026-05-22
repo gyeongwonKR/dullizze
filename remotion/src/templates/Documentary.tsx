@@ -1,13 +1,14 @@
 import { AbsoluteFill, Audio, staticFile } from "remotion";
 
-import { BackgroundImages, TemplateProps, useCurrentCaption } from "../shared";
+import { BackgroundImages, BgmTrack, TemplateProps, useCurrentCaption } from "../shared";
 
 // 역사/다큐: 어두운 시네마틱. 하단 그라데이션 + 비네트, 하단 중앙 자막.
-export const Documentary = ({ audioSrc, images, captions }: TemplateProps) => {
+export const Documentary = ({ audioSrc, images, captions, bgm }: TemplateProps) => {
   const caption = useCurrentCaption(captions);
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       <Audio src={staticFile(audioSrc)} />
+      <BgmTrack bgm={bgm} />
       <BackgroundImages images={images} to={1.1} />
 
       {/* 이미지 통일감 + 자막 가독성을 위한 어두운 그라데이션 */}

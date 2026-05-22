@@ -37,6 +37,13 @@ def run(
     plan: str | None = None,
     visual_mode: str | None = None,
     visual_provider: str | None = None,
+    preset_id: str | None = None,
+    voice: str | None = None,
+    model: str | None = None,
+    channel_name: str | None = None,
+    footer_main: str | None = None,
+    footer_accent: str | None = None,
+    accent_color: str | None = None,
     out_dir: Path | None = None,
 ) -> Path:
     job_id = config.validate_job_id(job_id) if job_id else config.new_job_id()
@@ -60,6 +67,13 @@ def run(
                 "plan": job.get("plan") or plan or config.DEFAULT_PLAN,
                 "visual_mode": job.get("visual_mode") or selected_visual_mode,
                 "visual_provider": job.get("visual_provider") or selected_visual_provider,
+                "preset_id": job.get("preset_id") or preset_id,
+                "voice": job.get("voice") or config.normalize_voice(voice),
+                "model": job.get("model") or config.normalize_model(model),
+                "channel_name": job.get("channel_name") or channel_name or "",
+                "footer_main": job.get("footer_main") or footer_main or "",
+                "footer_accent": job.get("footer_accent") or footer_accent or "",
+                "accent_color": job.get("accent_color") or config.normalize_accent_color(accent_color),
                 "status": "running",
                 "step": "start",
                 "error": None,
@@ -68,18 +82,30 @@ def run(
         job.setdefault("artifacts", {})
         jobs.write_job(out, job)
     else:
+        # 프리셋 해석은 create_manifest가 한다(명시 > 프리셋 > 기본) → 원본 값 그대로 전달.
         job = jobs.create_manifest(
             topic,
-            selected_tone,
-            selected_template,
+            tone,
+            template,
             job_id,
             user_id,
             plan,
             "running",
             "start",
-            visual_mode=selected_visual_mode,
-            visual_provider=selected_visual_provider,
+            visual_mode=visual_mode,
+            visual_provider=visual_provider,
+            preset_id=preset_id,
+            voice=voice,
+            model=model,
+            channel_name=channel_name,
+            footer_main=footer_main,
+            footer_accent=footer_accent,
+            accent_color=accent_color,
         )
+    selected_template = job.get("template") or selected_template
+    selected_tone = job.get("tone") or selected_tone
+    selected_voice = job.get("voice") or config.normalize_voice(voice)
+    selected_model = job.get("model") or config.normalize_model(model)
     selected_visual_mode = job.get("visual_mode") or selected_visual_mode
     selected_visual_provider = job.get("visual_provider") or selected_visual_provider
     log.info(
@@ -107,9 +133,9 @@ def run(
         log.info("[%d] %s 완료 (%.1fs)", num, name, time.time() - t0)
         return result
 
-    script = step(2, "스크립트 생성", lambda: script_gen.generate(topic, out, selected_tone))
+    script = step(2, "스크립트 생성", lambda: script_gen.generate(topic, out, selected_tone, model=selected_model))
     job["artifacts"]["script"] = "script.json"
-    mp3 = step(3, "TTS", lambda: tts.synthesize(script["narration"], out))
+    mp3 = step(3, "TTS", lambda: tts.synthesize(script["narration"], out, voice=selected_voice))
     job["artifacts"]["audio"] = jobs.rel(out, mp3)
     job["artifacts"]["boundaries"] = "boundaries.json"
     assets = step(
@@ -127,7 +153,19 @@ def run(
     caps = step(5, "자막 그룹핑", lambda: captions.build(out))
     job["artifacts"]["captions"] = "captions.json"
     title = script.get("title") or script.get("hook") or topic
-    final = step(6, "영상 합성", lambda: render.render(mp3, caps, assets, out, selected_template, title))
+    overlay = {
+        "headlineMain": script.get("headline_main") or script.get("hook") or "",
+        "headlineAccent": script.get("headline_accent") or "",
+        "channelName": job.get("channel_name") or "",
+        "footerMain": job.get("footer_main") or "",
+        "footerAccent": job.get("footer_accent") or "",
+        "accentColor": job.get("accent_color") or config.DEFAULT_ACCENT_COLOR,
+    }
+    final = step(
+        6,
+        "영상 합성",
+        lambda: render.render(mp3, caps, assets, out, selected_template, title, overlay=overlay),
+    )
     job["artifacts"]["props"] = "props.json"
     job["artifacts"]["video"] = jobs.rel(out, final)
     job["status"] = "done"
@@ -150,6 +188,13 @@ def main() -> None:
     parser.add_argument("--template", default=None, help="템플릿: documentary | pop (기본: .env TEMPLATE)")
     parser.add_argument("--visual-mode", default=None, help="비주얼 모드: auto | motion_image | stock_video | ai_video")
     parser.add_argument("--visual-provider", default=None, help="비주얼 provider: auto | xai | kie | pexels | pixabay | local")
+    parser.add_argument("--preset-id", default=None, help="프리셋 ID (지정 시 저장된 설정을 base로 사용)")
+    parser.add_argument("--voice", default=None, help="TTS 보이스 (기본: .env DEFAULT_VOICE)")
+    parser.add_argument("--model", default=None, help="대본 모델 (기본: .env CLAUDE_MODEL)")
+    parser.add_argument("--channel-name", default=None, help="banner 상단 채널 라인")
+    parser.add_argument("--footer-main", default=None, help="banner 하단 흰색 문구")
+    parser.add_argument("--footer-accent", default=None, help="banner 하단 강조 문구")
+    parser.add_argument("--accent-color", default=None, help="banner 강조색 (기본: .env DEFAULT_ACCENT_COLOR)")
     parser.add_argument("--job-id", default=None, help="작업 ID (기본: 자동 생성)")
     args = parser.parse_args()
     run(
@@ -160,6 +205,13 @@ def main() -> None:
         job_id=args.job_id,
         visual_mode=args.visual_mode,
         visual_provider=args.visual_provider,
+        preset_id=args.preset_id,
+        voice=args.voice,
+        model=args.model,
+        channel_name=args.channel_name,
+        footer_main=args.footer_main,
+        footer_accent=args.footer_accent,
+        accent_color=args.accent_color,
     )
 
 

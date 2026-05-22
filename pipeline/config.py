@@ -27,7 +27,18 @@ DEFAULT_VOICE = os.getenv("DEFAULT_VOICE", "ko-KR-SunHiNeural")
 DEFAULT_TONE = os.getenv("DEFAULT_TONE", "흥미로운_사실")
 
 # --- 템플릿 (영상 디자인) ---
-TEMPLATE = os.getenv("TEMPLATE", "documentary")  # documentary | pop
+KNOWN_TEMPLATES = ("documentary", "pop", "banner")
+TEMPLATE = os.getenv("TEMPLATE", "documentary")  # documentary | pop | banner
+# banner 템플릿(레터박스/밴드형) 강조색 기본값. 프리셋 accent_color로 덮어쓸 수 있음.
+DEFAULT_ACCENT_COLOR = os.getenv("DEFAULT_ACCENT_COLOR", "#ff4fa3")
+
+# --- BGM (배경음악) ---
+# 음원은 assets/bgm/<파일>에 두고, 없으면 BGM 없이 정상 렌더(안전 fallback).
+BGM_ENABLED = os.getenv("BGM_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
+BGM_DIR = ROOT / "assets" / "bgm"
+TEMPLATE_BGM = {"documentary": "documentary.mp3", "pop": "pop.mp3"}
+BGM_VOLUME_DB = float(os.getenv("BGM_VOLUME_DB", "-22"))  # 음성 우선(-20~-26dB 권장)
+BGM_FADE_MS = int(os.getenv("BGM_FADE_MS", "800"))        # fade in/out 길이
 
 # --- 자막 (TTS 단어경계 기반 구문 그룹핑) ---
 # 어절을 "한 호흡 = 한 줄"로 묶는 기준. 아래 중 하나라도 충족하면 줄을 끊는다.
@@ -50,6 +61,10 @@ KIE_API_KEY = os.getenv("KIE_API_KEY", "")
 
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 USER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}$")
+PRESET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+# --- 프리셋 (생성 설정 묶음 = 주제 제외한 스타일 레시피) ---
+PRESETS_DIR = ROOT / "data" / "presets"
 
 # --- SaaS 준비: 임시 사용자/플랜 ---
 DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "local")
@@ -94,6 +109,46 @@ def validate_visual_provider(provider: str | None) -> str:
     if provider not in VISUAL_PROVIDERS:
         raise ValueError(f"visual_provider는 {', '.join(VISUAL_PROVIDERS)} 중 하나여야 합니다.")
     return provider
+
+
+def validate_template(template: str | None) -> str:
+    """영상 디자인 템플릿 검증."""
+    template = (template or TEMPLATE).strip().lower()
+    if template not in KNOWN_TEMPLATES:
+        raise ValueError(f"template은 {', '.join(KNOWN_TEMPLATES)} 중 하나여야 합니다.")
+    return template
+
+
+def normalize_voice(voice: str | None) -> str:
+    """TTS 보이스 정규화(빈 값이면 기본 보이스)."""
+    return (voice or DEFAULT_VOICE).strip()
+
+
+def normalize_model(model: str | None) -> str:
+    """대본 모델 정규화(빈 값이면 기본 모델). 전체 모델 ID 문자열을 받는다."""
+    return (model or CLAUDE_MODEL).strip()
+
+
+def normalize_accent_color(color: str | None) -> str:
+    """banner 강조색 정규화(빈 값이면 기본 강조색)."""
+    return (color or DEFAULT_ACCENT_COLOR).strip()
+
+
+def validate_preset_id(preset_id: str) -> str:
+    """경로 탈출을 막기 위해 안전한 preset_id만 허용."""
+    if not PRESET_ID_RE.fullmatch(preset_id):
+        raise ValueError("preset_id는 영문/숫자로 시작하고 영문·숫자·_·-·.만 사용할 수 있습니다.")
+    return preset_id
+
+
+def new_preset_id() -> str:
+    """짧고 안전한 프리셋 ID."""
+    return f"preset-{uuid.uuid4().hex[:8]}"
+
+
+def bgm_linear_volume() -> float:
+    """BGM 데시벨(dB)을 Remotion volume용 선형 배율로 변환."""
+    return round(10 ** (BGM_VOLUME_DB / 20), 4)
 
 
 def run_dir(d: date | None = None, job_id: str | None = None) -> Path:

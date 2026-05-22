@@ -7,12 +7,12 @@ import {
   useVideoConfig,
 } from "remotion";
 
-import { BackgroundImages, TemplateProps, useCurrentCaption } from "../shared";
+import { BackgroundImages, BgmTrack, TemplateProps, useCurrentCaption } from "../shared";
 
 const ACCENT = "#FFE000";
 
 // 잡지식/팝: 밝고 강한 톤. 상단 진행바 + 악센트 박스 자막(중앙 하단).
-export const Pop = ({ audioSrc, images, captions }: TemplateProps) => {
+export const Pop = ({ audioSrc, images, captions, bgm }: TemplateProps) => {
   const caption = useCurrentCaption(captions);
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
@@ -23,6 +23,7 @@ export const Pop = ({ audioSrc, images, captions }: TemplateProps) => {
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       <Audio src={staticFile(audioSrc)} />
+      <BgmTrack bgm={bgm} />
       <BackgroundImages images={images} to={1.16} />
 
       <AbsoluteFill

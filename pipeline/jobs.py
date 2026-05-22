@@ -8,6 +8,7 @@ from typing import Any
 
 from pipeline import accounts
 from pipeline import config
+from pipeline import presets
 
 
 def now_iso() -> str:
@@ -37,22 +38,48 @@ def create_manifest(
     overwrite: bool = True,
     visual_mode: str | None = None,
     visual_provider: str | None = None,
+    preset_id: str | None = None,
+    voice: str | None = None,
+    model: str | None = None,
+    channel_name: str | None = None,
+    footer_main: str | None = None,
+    footer_accent: str | None = None,
+    accent_color: str | None = None,
 ) -> dict[str, Any]:
     job_id = config.validate_job_id(job_id) if job_id else config.new_job_id()
     user_id = accounts.normalize_user_id(user_id)
     plan = accounts.normalize_plan(plan)
-    visual_mode = config.validate_visual_mode(visual_mode)
-    visual_provider = config.validate_visual_provider(visual_provider)
+    # 프리셋(있으면)을 base로 깔고, 명시값이 우선(명시 > 프리셋 > 시스템 기본).
+    resolved = presets.resolve(user_id, preset_id)
+    template = config.validate_template(template or resolved.get("template"))
+    tone = (tone or resolved.get("tone") or config.DEFAULT_TONE).strip()
+    visual_mode = config.validate_visual_mode(visual_mode or resolved.get("visual_mode"))
+    visual_provider = config.validate_visual_provider(
+        visual_provider or resolved.get("visual_provider")
+    )
+    voice = config.normalize_voice(voice or resolved.get("voice"))
+    model = config.normalize_model(model or resolved.get("model"))
+    channel_name = (channel_name or resolved.get("channel_name") or "").strip()
+    footer_main = (footer_main or resolved.get("footer_main") or "").strip()
+    footer_accent = (footer_accent or resolved.get("footer_accent") or "").strip()
+    accent_color = config.normalize_accent_color(accent_color or resolved.get("accent_color"))
     out_dir = config.run_dir(job_id=job_id)
     if not overwrite and (out_dir / "job.json").exists():
         raise FileExistsError(f"이미 존재하는 job_id입니다: {job_id}")
     job = {
         "job_id": job_id,
         "topic": topic,
-        "tone": tone or config.DEFAULT_TONE,
-        "template": template or config.TEMPLATE,
+        "tone": tone,
+        "template": template,
         "user_id": user_id,
         "plan": plan,
+        "preset_id": preset_id,
+        "voice": voice,
+        "model": model,
+        "channel_name": channel_name,
+        "footer_main": footer_main,
+        "footer_accent": footer_accent,
+        "accent_color": accent_color,
         "visual_mode": visual_mode,
         "visual_provider": visual_provider,
         "quota": accounts.quota_snapshot(user_id, plan, exclude_job_id=job_id),

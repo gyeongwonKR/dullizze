@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import subprocess
 from pathlib import Path
 
 from pipeline import config
 
-KNOWN_TEMPLATES = ("documentary", "pop")
+KNOWN_TEMPLATES = config.KNOWN_TEMPLATES
 
 
 def _audio_seconds(mp3: Path) -> float:
@@ -40,8 +41,37 @@ def _quality_gate(template: str, captions: list[dict], assets: list[Path], total
         raise ValueError(f"영상 길이가 올바르지 않습니다: {total} frames")
 
 
+def _resolve_bgm(template: str, out_dir: Path, total: int) -> dict | None:
+    """템플릿 기본 BGM을 out_dir로 복사하고 props 반환. 음원 없으면 None(BGM 생략)."""
+    if not config.BGM_ENABLED:
+        return None
+    name = config.TEMPLATE_BGM.get(template)
+    if not name:
+        return None
+    src = config.BGM_DIR / name
+    if not src.exists() or src.stat().st_size == 0:
+        return None
+    dst = out_dir / "bgm.mp3"
+    if not (dst.exists() and dst.stat().st_size > 0):
+        shutil.copyfile(src, dst)
+    fade = round(config.BGM_FADE_MS / 1000 * config.FPS)
+    fade = min(fade, total // 2)  # 짧은 영상에서 fade가 전체를 덮지 않도록
+    return {
+        "src": "bgm.mp3",
+        "volume": config.bgm_linear_volume(),
+        "fadeInFrames": fade,
+        "fadeOutFrames": fade,
+    }
+
+
 def _build_props(
-    mp3: Path, captions: list[dict], assets: list[Path], out_dir: Path, template: str, title: str
+    mp3: Path,
+    captions: list[dict],
+    assets: list[Path],
+    out_dir: Path,
+    template: str,
+    title: str,
+    overlay: dict | None = None,
 ) -> Path:
     seconds = _audio_seconds(mp3)
     total = math.ceil(seconds * config.FPS) + config.FPS // 2  # 0.5s 여유
@@ -69,6 +99,11 @@ def _build_props(
         "template": template,
         "title": title,
     }
+    bgm = _resolve_bgm(template, out_dir, total)
+    if bgm:
+        props["bgm"] = bgm
+    if overlay:
+        props.update(overlay)  # banner: headline/channel/footer/accentColor
     props_path = out_dir / "props.json"
     props_path.write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
     return props_path
@@ -81,6 +116,7 @@ def render(
     out_dir: Path,
     template: str | None = None,
     title: str = "",
+    overlay: dict | None = None,
 ) -> Path:
     """final.mp4 생성. 이미 있으면 재사용(멱등)."""
     final = out_dir / "final.mp4"
@@ -88,7 +124,7 @@ def render(
         return final
 
     template = template or config.TEMPLATE
-    props_path = _build_props(mp3, captions, assets, out_dir, template, title)
+    props_path = _build_props(mp3, captions, assets, out_dir, template, title, overlay)
     cmd = [
         "npx", "remotion", "render",
         "remotion/src/index.ts", "Main",

@@ -170,7 +170,7 @@
 
       .segments {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(3, 1fr);
         gap: 6px;
         padding: 4px;
         border: 1px solid var(--line);
@@ -436,6 +436,15 @@
               <label for="tone">톤</label>
               <input id="tone" type="text" value="흥미로운_사실" />
 
+              <label for="voice">보이스</label>
+              <input id="voice" type="text" value="ko-KR-SunHiNeural" />
+
+              <label for="model">대본 모델</label>
+              <select id="model">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5 (기본)</option>
+                <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+              </select>
+
               <label for="userId">사용자</label>
               <input id="userId" type="text" value="local" autocomplete="off" />
 
@@ -470,7 +479,20 @@
                   Documentary
                 </button>
                 <button class="segment" type="button" data-template="pop" aria-pressed="false">Pop</button>
+                <button class="segment" type="button" data-template="banner" aria-pressed="false">Banner</button>
               </div>
+
+              <label for="channelName">채널명 (banner)</label>
+              <input id="channelName" type="text" autocomplete="off" placeholder="예: 소소한 AI 입문노트 | 소에노" />
+
+              <label for="footerMain">하단 문구 (banner)</label>
+              <input id="footerMain" type="text" autocomplete="off" placeholder="예: 클로드가 인스타를 시작했다" />
+
+              <label for="footerAccent">하단 강조 문구 (banner)</label>
+              <input id="footerAccent" type="text" autocomplete="off" placeholder="예: ↓본 영상 아래에서 확인하기↓" />
+
+              <label for="accentColor">강조색 (banner)</label>
+              <input id="accentColor" type="text" autocomplete="off" value="#ff4fa3" />
 
               <label class="check-row">
                 <input id="autoStart" type="checkbox" checked />
@@ -482,6 +504,23 @@
                 <button id="runBtn" class="secondary" type="button">실행</button>
               </div>
             </form>
+          </section>
+
+          <section class="panel">
+            <h2>프리셋</h2>
+            <label for="presetSelect">저장된 프리셋</label>
+            <select id="presetSelect">
+              <option value="">(없음 / auto)</option>
+            </select>
+            <div class="actions">
+              <button id="applyPresetBtn" class="secondary" type="button">적용</button>
+              <button id="deletePresetBtn" class="secondary" type="button">삭제</button>
+            </div>
+            <label for="presetName">새 프리셋 이름</label>
+            <input id="presetName" type="text" autocomplete="off" placeholder="예: 내 역사채널" />
+            <div class="actions">
+              <button id="savePresetBtn" class="secondary" type="button">현재 설정 저장</button>
+            </div>
           </section>
 
           <section class="panel">
@@ -532,6 +571,7 @@
         template: "documentary",
         job: null,
         timer: null,
+        presets: [],
       };
 
       const $ = (id) => document.getElementById(id);
@@ -551,6 +591,7 @@
           } catch (_) {}
           throw new Error(message);
         }
+        if (res.status === 204) return null;
         return res.json();
       }
 
@@ -590,6 +631,13 @@
         $("jobId").value = job?.job_id || "";
         if (job?.visual_mode) $("visualMode").value = job.visual_mode;
         if (job?.visual_provider) $("visualProvider").value = job.visual_provider;
+        if (job?.voice) $("voice").value = job.voice;
+        if (job?.model) $("model").value = job.model;
+        if (job?.channel_name) $("channelName").value = job.channel_name;
+        if (job?.footer_main) $("footerMain").value = job.footer_main;
+        if (job?.footer_accent) $("footerAccent").value = job.footer_accent;
+        if (job?.accent_color) $("accentColor").value = job.accent_color;
+        if (job?.preset_id) $("presetSelect").value = job.preset_id;
         $("jobTitle").textContent = job?.topic || "작업 없음";
         $("jobMeta").textContent = job ? job.job_id : "-";
         $("stepValue").textContent = job?.step || "-";
@@ -635,13 +683,11 @@
             method: "POST",
             body: JSON.stringify({
               topic: $("topic").value,
-              tone: $("tone").value || null,
               user_id: $("userId").value || null,
               plan: $("plan").value || null,
-              visual_mode: $("visualMode").value || null,
-              visual_provider: $("visualProvider").value || null,
-              template: state.template,
+              preset_id: $("presetSelect").value || null,
               auto_start: $("autoStart").checked,
+              ...formFields(),
             }),
           });
           renderJob(job);
@@ -700,10 +746,98 @@
         return quota;
       }
 
+      function formFields() {
+        return {
+          template: state.template,
+          tone: $("tone").value || null,
+          visual_mode: $("visualMode").value || null,
+          visual_provider: $("visualProvider").value || null,
+          voice: $("voice").value || null,
+          model: $("model").value || null,
+          channel_name: $("channelName").value || null,
+          footer_main: $("footerMain").value || null,
+          footer_accent: $("footerAccent").value || null,
+          accent_color: $("accentColor").value || null,
+        };
+      }
+
+      async function loadPresets() {
+        const userId = $("userId").value.trim() || "local";
+        try {
+          const presets = await request(`/users/${encodeURIComponent(userId)}/presets`);
+          state.presets = presets;
+          const select = $("presetSelect");
+          const current = select.value;
+          select.innerHTML = '<option value="">(없음 / auto)</option>';
+          presets.forEach((p) => {
+            const opt = document.createElement("option");
+            opt.value = p.preset_id;
+            opt.textContent = p.name;
+            select.appendChild(opt);
+          });
+          if (presets.some((p) => p.preset_id === current)) select.value = current;
+        } catch (_) {
+          /* 프리셋은 선택사항 */
+        }
+      }
+
+      function applyPreset() {
+        const preset = state.presets.find((p) => p.preset_id === $("presetSelect").value);
+        if (!preset) return;
+        setTemplate(preset.template);
+        $("tone").value = preset.tone || "";
+        $("visualMode").value = preset.visual_mode || "motion_image";
+        $("visualProvider").value = preset.visual_provider || "auto";
+        $("voice").value = preset.voice || "";
+        if (preset.model) $("model").value = preset.model;
+        $("channelName").value = preset.channel_name || "";
+        $("footerMain").value = preset.footer_main || "";
+        $("footerAccent").value = preset.footer_accent || "";
+        if (preset.accent_color) $("accentColor").value = preset.accent_color;
+      }
+
+      async function savePreset() {
+        const name = $("presetName").value.trim();
+        if (!name) {
+          showError("프리셋 이름을 입력하세요.");
+          return;
+        }
+        const userId = $("userId").value.trim() || "local";
+        $("savePresetBtn").disabled = true;
+        try {
+          const preset = await request(`/users/${encodeURIComponent(userId)}/presets`, {
+            method: "POST",
+            body: JSON.stringify({ name, ...formFields() }),
+          });
+          $("presetName").value = "";
+          await loadPresets();
+          $("presetSelect").value = preset.preset_id;
+        } catch (error) {
+          showError(error.message);
+        } finally {
+          $("savePresetBtn").disabled = false;
+        }
+      }
+
+      async function deletePreset() {
+        const id = $("presetSelect").value;
+        if (!id) return;
+        const userId = $("userId").value.trim() || "local";
+        try {
+          await request(`/users/${encodeURIComponent(userId)}/presets/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+          await loadPresets();
+        } catch (error) {
+          showError(error.message);
+        }
+      }
+
       async function checkHealth() {
         try {
           await request("/health");
           await loadQuota();
+          await loadPresets();
         } catch (_) {
           $("apiState").textContent = "API offline";
         }
@@ -713,6 +847,9 @@
         button.addEventListener("click", () => setTemplate(button.dataset.template));
       });
       $("createForm").addEventListener("submit", createJob);
+      $("applyPresetBtn").addEventListener("click", applyPreset);
+      $("savePresetBtn").addEventListener("click", savePreset);
+      $("deletePresetBtn").addEventListener("click", deletePreset);
       $("loadBtn").addEventListener("click", loadJob);
       $("runBtn").addEventListener("click", runJob);
       $("clearBtn").addEventListener("click", () => {

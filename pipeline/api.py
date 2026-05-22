@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from pipeline import accounts
 from pipeline import config
 from pipeline import jobs
+from pipeline import presets
 from pipeline import main as pipeline_main
 
 app = FastAPI(title="Dullizze Shorts API", version="0.1.0")
@@ -27,7 +28,28 @@ class JobCreate(BaseModel):
     plan: str | None = None
     visual_mode: str | None = None
     visual_provider: str | None = None
+    preset_id: str | None = None
+    voice: str | None = None
+    model: str | None = None
+    channel_name: str | None = None
+    footer_main: str | None = None
+    footer_accent: str | None = None
+    accent_color: str | None = None
     auto_start: bool = True
+
+
+class PresetSave(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    template: str | None = None
+    tone: str | None = None
+    visual_mode: str | None = None
+    visual_provider: str | None = None
+    voice: str | None = None
+    model: str | None = None
+    channel_name: str | None = None
+    footer_main: str | None = None
+    footer_accent: str | None = None
+    accent_color: str | None = None
 
 
 def _job_dir_from_manifest(job: dict) -> Path:
@@ -69,6 +91,13 @@ def _run_job(job_id: str, run_dir: str) -> None:
                 plan=job.get("plan"),
                 visual_mode=job.get("visual_mode"),
                 visual_provider=job.get("visual_provider"),
+                preset_id=job.get("preset_id"),
+                voice=job.get("voice"),
+                model=job.get("model"),
+                channel_name=job.get("channel_name"),
+                footer_main=job.get("footer_main"),
+                footer_accent=job.get("footer_accent"),
+                accent_color=job.get("accent_color"),
                 out_dir=out_dir,
             )
         except Exception as e:  # noqa: BLE001 - background task failure must be recorded
@@ -113,12 +142,21 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks) -> dict:
             plan=payload.plan,
             visual_mode=payload.visual_mode,
             visual_provider=payload.visual_provider,
+            preset_id=payload.preset_id,
+            voice=payload.voice,
+            model=payload.model,
+            channel_name=payload.channel_name,
+            footer_main=payload.footer_main,
+            footer_accent=payload.footer_accent,
+            accent_color=payload.accent_color,
             overwrite=False,
         )
         if payload.auto_start:
             return _enqueue(job, background_tasks)
         return job
     except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except FileNotFoundError as e:  # 알 수 없는 preset_id 등
         raise HTTPException(status_code=400, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(status_code=402, detail=str(e)) from e
@@ -132,6 +170,52 @@ def get_user_quota(user_id: str, plan: str | None = None) -> dict:
         return accounts.quota_snapshot(user_id=user_id, plan=plan)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/users/{user_id}/presets")
+def list_user_presets(user_id: str) -> list[dict]:
+    try:
+        return presets.list_presets(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/users/{user_id}/presets", status_code=201)
+def create_user_preset(user_id: str, payload: PresetSave) -> dict:
+    try:
+        return presets.save_preset(user_id, payload.name, payload.model_dump(exclude={"name"}))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/users/{user_id}/presets/{preset_id}")
+def get_user_preset(user_id: str, preset_id: str) -> dict:
+    try:
+        return presets.get_preset(user_id, preset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.put("/users/{user_id}/presets/{preset_id}")
+def update_user_preset(user_id: str, preset_id: str, payload: PresetSave) -> dict:
+    try:
+        return presets.save_preset(
+            user_id, payload.name, payload.model_dump(exclude={"name"}), preset_id=preset_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.delete("/users/{user_id}/presets/{preset_id}", status_code=204)
+def delete_user_preset(user_id: str, preset_id: str) -> None:
+    try:
+        presets.delete_preset(user_id, preset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @app.get("/jobs/{job_id}")
