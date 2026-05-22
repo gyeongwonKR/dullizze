@@ -36,6 +36,7 @@
 
       button,
       input,
+      select,
       textarea {
         font: inherit;
       }
@@ -133,6 +134,7 @@
       }
 
       textarea,
+      select,
       input[type="text"] {
         width: 100%;
         border: 1px solid var(--line);
@@ -154,7 +156,13 @@
         padding: 0 11px;
       }
 
+      select {
+        height: 40px;
+        padding: 0 34px 0 11px;
+      }
+
       textarea:focus,
+      select:focus,
       input[type="text"]:focus {
         border-color: var(--accent);
         box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
@@ -428,6 +436,16 @@
               <label for="tone">톤</label>
               <input id="tone" type="text" value="흥미로운_사실" />
 
+              <label for="userId">사용자</label>
+              <input id="userId" type="text" value="local" autocomplete="off" />
+
+              <label for="plan">플랜</label>
+              <select id="plan">
+                <option value="free">Free</option>
+                <option value="basic">Basic</option>
+                <option value="pro">Pro</option>
+              </select>
+
               <label>템플릿</label>
               <div class="segments" role="group" aria-label="템플릿">
                 <button class="segment" type="button" data-template="documentary" aria-pressed="true">
@@ -477,6 +495,8 @@
               <h2>상태</h2>
               <div class="steps">
                 <div class="step"><div class="key">Step</div><div id="stepValue" class="value">-</div></div>
+                <div class="step"><div class="key">User</div><div id="userValue" class="value">-</div></div>
+                <div class="step"><div class="key">Quota</div><div id="quotaValue" class="value">-</div></div>
                 <div class="step"><div class="key">Template</div><div id="templateValue" class="value">-</div></div>
                 <div class="step"><div class="key">Updated</div><div id="updatedValue" class="value">-</div></div>
                 <div class="step"><div class="key">Run Dir</div><div id="runDirValue" class="value">-</div></div>
@@ -552,6 +572,8 @@
         $("jobTitle").textContent = job?.topic || "작업 없음";
         $("jobMeta").textContent = job ? job.job_id : "-";
         $("stepValue").textContent = job?.step || "-";
+        $("userValue").textContent = job ? `${job.user_id || "local"} / ${job.plan || "free"}` : "-";
+        $("quotaValue").textContent = quotaText(job?.quota);
         $("templateValue").textContent = job?.template || "-";
         $("updatedValue").textContent = job?.updated_at || "-";
         $("runDirValue").textContent = job?.run_dir || "-";
@@ -590,6 +612,8 @@
             body: JSON.stringify({
               topic: $("topic").value,
               tone: $("tone").value || null,
+              user_id: $("userId").value || null,
+              plan: $("plan").value || null,
               template: state.template,
               auto_start: $("autoStart").checked,
             }),
@@ -637,10 +661,23 @@
         $("errorBox").textContent = message;
       }
 
+      function quotaText(quota) {
+        if (!quota) return "-";
+        return `${quota.used}/${quota.limit} · ${quota.remaining} 남음`;
+      }
+
+      async function loadQuota() {
+        const userId = $("userId").value.trim() || "local";
+        const plan = $("plan").value || "free";
+        const quota = await request(`/users/${encodeURIComponent(userId)}/quota?plan=${encodeURIComponent(plan)}`);
+        $("apiState").textContent = `API online · ${quota.used}/${quota.limit}`;
+        return quota;
+      }
+
       async function checkHealth() {
         try {
           await request("/health");
-          $("apiState").textContent = "API online";
+          await loadQuota();
         } catch (_) {
           $("apiState").textContent = "API offline";
         }
@@ -657,6 +694,8 @@
         renderJob(null);
         $("jobId").value = "";
       });
+      $("userId").addEventListener("change", checkHealth);
+      $("plan").addEventListener("change", checkHealth);
       checkHealth();
     </script>
   </body>

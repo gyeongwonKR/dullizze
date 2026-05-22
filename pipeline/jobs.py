@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline import accounts
 from pipeline import config
 
 
@@ -29,11 +30,15 @@ def create_manifest(
     tone: str | None = None,
     template: str | None = None,
     job_id: str | None = None,
+    user_id: str | None = None,
+    plan: str | None = None,
     status: str = "pending",
     step: str = "created",
     overwrite: bool = True,
 ) -> dict[str, Any]:
     job_id = config.validate_job_id(job_id) if job_id else config.new_job_id()
+    user_id = accounts.normalize_user_id(user_id)
+    plan = accounts.normalize_plan(plan)
     out_dir = config.run_dir(job_id=job_id)
     if not overwrite and (out_dir / "job.json").exists():
         raise FileExistsError(f"이미 존재하는 job_id입니다: {job_id}")
@@ -42,6 +47,9 @@ def create_manifest(
         "topic": topic,
         "tone": tone or config.DEFAULT_TONE,
         "template": template or config.TEMPLATE,
+        "user_id": user_id,
+        "plan": plan,
+        "quota": accounts.quota_snapshot(user_id, plan, exclude_job_id=job_id),
         "status": status,
         "step": step,
         "created_at": now_iso(),

@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+from pipeline import accounts
 from pipeline import config
 from pipeline import jobs
 from pipeline.steps import captions, render, script_gen, tts, visuals
@@ -32,6 +33,8 @@ def run(
     no_upload: bool = True,
     template: str | None = None,
     job_id: str | None = None,
+    user_id: str | None = None,
+    plan: str | None = None,
     out_dir: Path | None = None,
 ) -> Path:
     job_id = config.validate_job_id(job_id) if job_id else config.new_job_id()
@@ -49,6 +52,8 @@ def run(
                 "topic": topic,
                 "tone": selected_tone,
                 "template": selected_template,
+                "user_id": job.get("user_id") or user_id or config.DEFAULT_USER_ID,
+                "plan": job.get("plan") or plan or config.DEFAULT_PLAN,
                 "status": "running",
                 "step": "start",
                 "error": None,
@@ -57,7 +62,16 @@ def run(
         job.setdefault("artifacts", {})
         jobs.write_job(out, job)
     else:
-        job = jobs.create_manifest(topic, selected_tone, selected_template, job_id, "running", "start")
+        job = jobs.create_manifest(
+            topic,
+            selected_tone,
+            selected_template,
+            job_id,
+            user_id,
+            plan,
+            "running",
+            "start",
+        )
     log.info("=== 파이프라인 시작: %r → %s ===", topic, out)
 
     def step(num: int, name: str, fn):
@@ -93,6 +107,7 @@ def run(
     job["status"] = "done"
     job["step"] = "done"
     job["error"] = None
+    job["quota"] = accounts.quota_snapshot(job.get("user_id"), job.get("plan"))
     jobs.write_job(out, job)
 
     log.info("=== 완료: %s ===", final)

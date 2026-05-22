@@ -44,6 +44,16 @@ XAI_API_KEY = os.getenv("XAI_API_KEY", "")
 XAI_IMAGE_MODEL = os.getenv("XAI_IMAGE_MODEL", "grok-imagine-image")
 
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+USER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}$")
+
+# --- SaaS 준비: 임시 사용자/플랜 ---
+DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "local")
+DEFAULT_PLAN = os.getenv("DEFAULT_PLAN", "free")
+PLAN_MONTHLY_QUOTAS = {
+    "free": int(os.getenv("FREE_MONTHLY_QUOTA", "3")),
+    "basic": int(os.getenv("BASIC_MONTHLY_QUOTA", "30")),
+    "pro": int(os.getenv("PRO_MONTHLY_QUOTA", "100")),
+}
 
 
 def new_job_id() -> str:
@@ -56,6 +66,13 @@ def validate_job_id(job_id: str) -> str:
     if not JOB_ID_RE.fullmatch(job_id):
         raise ValueError("job_id는 영문/숫자로 시작하고 영문·숫자·_·-·.만 사용할 수 있습니다.")
     return job_id
+
+
+def validate_user_id(user_id: str) -> str:
+    """임시 파일 기반 사용자 ID 검증."""
+    if not USER_ID_RE.fullmatch(user_id):
+        raise ValueError("user_id는 영문/숫자로 시작하고 영문·숫자·_·-·.·@만 사용할 수 있습니다.")
+    return user_id
 
 
 def run_dir(d: date | None = None, job_id: str | None = None) -> Path:

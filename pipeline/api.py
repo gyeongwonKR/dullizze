@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from pipeline import accounts
 from pipeline import config
 from pipeline import jobs
 from pipeline import main as pipeline_main
@@ -22,6 +23,8 @@ class JobCreate(BaseModel):
     tone: str | None = None
     template: str | None = None
     job_id: str | None = None
+    user_id: str | None = None
+    plan: str | None = None
     auto_start: bool = True
 
 
@@ -31,9 +34,19 @@ def _job_dir_from_manifest(job: dict) -> Path:
 
 def _set_queued(job: dict) -> dict:
     out_dir = _job_dir_from_manifest(job)
+    try:
+        job["user_id"] = accounts.normalize_user_id(job.get("user_id"))
+        job["plan"] = accounts.normalize_plan(job.get("plan"))
+        job["quota"] = accounts.ensure_quota_available(job)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=402, detail=str(e)) from e
     job["status"] = "queued"
     job["step"] = "queued"
     job["error"] = None
+    jobs.write_job(out_dir, job)
+    job["quota"] = accounts.quota_snapshot(job.get("user_id"), job.get("plan"))
     jobs.write_job(out_dir, job)
     return job
 
@@ -48,6 +61,8 @@ def _run_job(job_id: str, run_dir: str) -> None:
                 tone=job.get("tone"),
                 template=job.get("template"),
                 job_id=job_id,
+                user_id=job.get("user_id"),
+                plan=job.get("plan"),
                 out_dir=out_dir,
             )
         except Exception as e:  # noqa: BLE001 - background task failure must be recorded
@@ -81,11 +96,15 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks) -> dict:
     if not topic:
         raise HTTPException(status_code=400, detail="topic은 비워둘 수 없습니다.")
     try:
+        if payload.auto_start:
+            accounts.ensure_quota_available({"user_id": payload.user_id, "plan": payload.plan})
         job = jobs.create_manifest(
             topic=topic,
             tone=payload.tone,
             template=payload.template,
             job_id=payload.job_id,
+            user_id=payload.user_id,
+            plan=payload.plan,
             overwrite=False,
         )
         if payload.auto_start:
@@ -93,8 +112,18 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks) -> dict:
         return job
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=402, detail=str(e)) from e
     except FileExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@app.get("/users/{user_id}/quota")
+def get_user_quota(user_id: str, plan: str | None = None) -> dict:
+    try:
+        return accounts.quota_snapshot(user_id=user_id, plan=plan)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.get("/jobs/{job_id}")
