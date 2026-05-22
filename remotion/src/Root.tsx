@@ -9,6 +9,8 @@ const defaultProps: MainProps = {
   audioSrc: "voice.mp3",
   images: [],
   captions: [],
+  template: "documentary",
+  title: "",
 };
 
 export const RemotionRoot = () => {

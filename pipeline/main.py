@@ -25,7 +25,7 @@ def _setup_logging(out_dir: Path) -> logging.Logger:
     return log
 
 
-def run(topic: str, tone: str | None = None, no_upload: bool = True) -> Path:
+def run(topic: str, tone: str | None = None, no_upload: bool = True, template: str | None = None) -> Path:
     out = config.run_dir()
     log = _setup_logging(out)
     log.info("=== 파이프라인 시작: %r → %s ===", topic, out)
@@ -45,7 +45,8 @@ def run(topic: str, tone: str | None = None, no_upload: bool = True) -> Path:
     mp3 = step(3, "TTS", lambda: tts.synthesize(script["narration"], out))
     assets = step(4, "비주얼 수집", lambda: visuals.collect(script["visual_prompts"], out))
     caps = step(5, "자막 그룹핑", lambda: captions.build(out))
-    final = step(6, "영상 합성", lambda: render.render(mp3, caps, assets, out))
+    title = script.get("title") or script.get("hook") or topic
+    final = step(6, "영상 합성", lambda: render.render(mp3, caps, assets, out, template, title))
 
     log.info("=== 완료: %s ===", final)
     if not no_upload:
@@ -58,8 +59,9 @@ def main() -> None:
     parser.add_argument("topic", help="영상 주제 (한 줄)")
     parser.add_argument("--no-upload", action="store_true", help="업로드 생략 (Phase 1 기본)")
     parser.add_argument("--tone", default=None, help="톤 (기본: .env DEFAULT_TONE)")
+    parser.add_argument("--template", default=None, help="템플릿: documentary | pop (기본: .env TEMPLATE)")
     args = parser.parse_args()
-    run(args.topic, tone=args.tone, no_upload=args.no_upload or True)
+    run(args.topic, tone=args.tone, no_upload=args.no_upload or True, template=args.template)
 
 
 if __name__ == "__main__":
