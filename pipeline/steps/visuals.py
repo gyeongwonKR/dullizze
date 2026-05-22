@@ -1,7 +1,12 @@
-"""④ 비주얼 수집: Pollinations.ai → assets/*.jpg (키 불필요, asyncio)."""
+"""④ 비주얼 수집: Grok(grok-2-image) → assets/*.jpg.
+
+XAI_API_KEY가 있으면 Grok 이미지 API, 없으면 Pollinations.ai 폴백(키 불필요).
+9:16 프레이밍은 렌더 단계(Remotion objectFit:cover)에서 처리한다.
+"""
 from __future__ import annotations
 
 import asyncio
+import base64
 from pathlib import Path
 from urllib.parse import quote
 
@@ -9,14 +14,44 @@ import aiohttp
 
 from pipeline import config
 
-BASE = "https://image.pollinations.ai/prompt/"
+POLLINATIONS = "https://image.pollinations.ai/prompt/"
+XAI_IMAGES = "https://api.x.ai/v1/images/generations"
 
 
-async def _fetch(session: aiohttp.ClientSession, prompt: str, out: Path, seed: int, retries: int = 3) -> Path:
-    if out.exists() and out.stat().st_size > 0:
-        return out
+async def _fetch_grok(session: aiohttp.ClientSession, prompt: str, out: Path, retries: int = 3) -> Path:
+    headers = {"Authorization": f"Bearer {config.XAI_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": config.XAI_IMAGE_MODEL,
+        "prompt": prompt,
+        "n": 1,
+        "response_format": "b64_json",
+    }
+    delay = 2.0
+    for attempt in range(1, retries + 1):
+        try:
+            async with session.post(
+                XAI_IMAGES, headers=headers, json=payload,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
+                resp.raise_for_status()
+                body = await resp.json()
+            data = base64.b64decode(body["data"][0]["b64_json"])
+            if len(data) < 1000:
+                raise RuntimeError(f"이미지가 너무 작음({len(data)}B)")
+            out.write_bytes(data)
+            return out
+        except Exception as e:  # noqa: BLE001 - 단계별로 잡아 재시도
+            if attempt == retries:
+                raise
+            print(f"  [visuals/grok] {out.name} 시도 {attempt} 실패({e!r}), {delay:.0f}s 후 재시도")
+            await asyncio.sleep(delay)
+            delay *= 2
+    return out
+
+
+async def _fetch_pollinations(session: aiohttp.ClientSession, prompt: str, out: Path, seed: int, retries: int = 3) -> Path:
     url = (
-        BASE
+        POLLINATIONS
         + quote(prompt)
         + f"?width={config.VIDEO_WIDTH}&height={config.VIDEO_HEIGHT}&nologo=true&seed={seed}"
     )
@@ -33,22 +68,27 @@ async def _fetch(session: aiohttp.ClientSession, prompt: str, out: Path, seed: i
         except Exception as e:  # noqa: BLE001 - 단계별로 잡아 재시도
             if attempt == retries:
                 raise
-            print(f"  [visuals] {out.name} 시도 {attempt} 실패({e!r}), {delay:.0f}s 후 재시도")
+            print(f"  [visuals/pollinations] {out.name} 시도 {attempt} 실패({e!r}), {delay:.0f}s 후 재시도")
             await asyncio.sleep(delay)
             delay *= 2
     return out
 
 
 async def _gather(prompts: list[str], assets_dir: Path) -> list[Path]:
-    # Pollinations 익명 티어는 동시 요청을 402(rate limit)로 막으므로 순차 처리.
+    use_grok = bool(config.XAI_API_KEY)
     results: list[Path] = []
     async with aiohttp.ClientSession() as session:
         for i, p in enumerate(prompts):
             out = assets_dir / f"{i:03d}.jpg"
-            cached = out.exists() and out.stat().st_size > 0
-            if i > 0 and not cached:
-                await asyncio.sleep(1.0)  # 익명 티어 rate limit 회피
-            results.append(await _fetch(session, p, out, seed=i))
+            if out.exists() and out.stat().st_size > 0:  # 멱등: 캐시 재사용
+                results.append(out)
+                continue
+            if use_grok:
+                results.append(await _fetch_grok(session, p, out))
+            else:
+                if i > 0:
+                    await asyncio.sleep(1.0)  # Pollinations 익명 티어 rate limit 회피
+                results.append(await _fetch_pollinations(session, p, out, seed=i))
     return results
 
 
