@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from anthropic import Anthropic
 
@@ -29,6 +31,14 @@ SYSTEM = """너는 한국어 정보/지식형 YouTube 쇼츠 작가다.
   "description": "유튜브 설명 (2~3문장)"
 }"""
 
+HAIKU_4_5_PRICING_USD_PER_MTOK = {
+    "input_tokens": 1.00,
+    "cache_creation_input_tokens": 1.25,  # 5분 ephemeral cache write
+    "cache_read_input_tokens": 0.10,
+    "output_tokens": 5.00,
+}
+HAIKU_4_5_CACHE_MIN_TOKENS = 4096
+
 
 def _extract_json(text: str) -> dict:
     """모델 출력에서 JSON 객체 추출."""
@@ -40,6 +50,81 @@ def _extract_json(text: str) -> dict:
     if start == -1 or end == -1:
         raise ValueError(f"JSON을 찾을 수 없음: {text[:200]}")
     return json.loads(text[start : end + 1])
+
+
+def _system_prompt() -> str | list[dict[str, Any]]:
+    """정적 시스템 프롬프트에 Anthropic prompt cache breakpoint를 붙인다."""
+    text = SYSTEM % config.NUM_VISUALS
+    if not config.CLAUDE_PROMPT_CACHE:
+        return text
+    return [
+        {
+            "type": "text",
+            "text": text,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
+def _usage_dict(usage: object | None) -> dict[str, int]:
+    fields = (
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "output_tokens",
+    )
+    result: dict[str, int] = {}
+    for field in fields:
+        value = getattr(usage, field, 0) if usage is not None else 0
+        result[field] = int(value or 0)
+    result["total_input_tokens"] = (
+        result["input_tokens"]
+        + result["cache_creation_input_tokens"]
+        + result["cache_read_input_tokens"]
+    )
+    return result
+
+
+def _estimate_cost_usd(usage: dict[str, int]) -> float | None:
+    if not config.CLAUDE_MODEL.startswith("claude-haiku-4-5"):
+        return None
+    cost = 0.0
+    for field, price in HAIKU_4_5_PRICING_USD_PER_MTOK.items():
+        cost += usage[field] * price / 1_000_000
+    return round(cost, 8)
+
+
+def _write_usage_log(out_dir: Path, usage: object | None) -> None:
+    usage_data = _usage_dict(usage)
+    cache_tokens = usage_data["cache_creation_input_tokens"] + usage_data["cache_read_input_tokens"]
+    payload = {
+        "model": config.CLAUDE_MODEL,
+        "prompt_cache_enabled": config.CLAUDE_PROMPT_CACHE,
+        "prompt_cache_type": "ephemeral" if config.CLAUDE_PROMPT_CACHE else None,
+        "prompt_cache_min_tokens": HAIKU_4_5_CACHE_MIN_TOKENS
+        if config.CLAUDE_MODEL.startswith("claude-haiku-4-5")
+        else None,
+        "prompt_cache_note": "Haiku 4.5는 4096토큰 이상 프롬프트만 실제 캐시됩니다."
+        if config.CLAUDE_MODEL.startswith("claude-haiku-4-5")
+        else None,
+        "prompt_cache_used": cache_tokens > 0,
+        "usage": usage_data,
+        "pricing_usd_per_mtok": HAIKU_4_5_PRICING_USD_PER_MTOK
+        if config.CLAUDE_MODEL.startswith("claude-haiku-4-5")
+        else None,
+        "estimated_cost_usd": _estimate_cost_usd(usage_data),
+    }
+    log_path = out_dir / "logs" / "script_usage.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    logging.getLogger("pipeline").info(
+        "Claude usage: input=%d cache_write=%d cache_read=%d output=%d cost=%s",
+        usage_data["input_tokens"],
+        usage_data["cache_creation_input_tokens"],
+        usage_data["cache_read_input_tokens"],
+        usage_data["output_tokens"],
+        payload["estimated_cost_usd"],
+    )
 
 
 def generate(topic: str, out_dir: Path, tone: str | None = None) -> dict:
@@ -56,7 +141,7 @@ def generate(topic: str, out_dir: Path, tone: str | None = None) -> dict:
     msg = client.messages.create(
         model=config.CLAUDE_MODEL,
         max_tokens=2000,
-        system=SYSTEM % config.NUM_VISUALS,
+        system=_system_prompt(),
         messages=[
             {
                 "role": "user",
@@ -64,6 +149,7 @@ def generate(topic: str, out_dir: Path, tone: str | None = None) -> dict:
             }
         ],
     )
+    _write_usage_log(out_dir, msg.usage)
     data = _extract_json(msg.content[0].text)
     data["topic"] = topic
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
