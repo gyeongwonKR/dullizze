@@ -1,0 +1,9 @@
+anthropic
+edge-tts
+requests
+faster-whisper
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+python-dotenv
+ruff

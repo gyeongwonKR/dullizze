@@ -1,0 +1,7 @@
+services:
+  shorts:
+    build: .
+    image: shorts-pipeline
+    env_file: .env          # API 키 등 (레포에 없음, PC마다 .env.example 복사해 작성)
+    volumes:
+      - ./runs:/app/runs    # 산출물(final.mp4 등)을 호스트 폴더로 노출

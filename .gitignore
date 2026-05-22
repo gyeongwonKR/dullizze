@@ -1,0 +1,21 @@
+# Secrets / env
+.env
+secrets/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node / Remotion
+node_modules/
+remotion/node_modules/
+
+# Run artifacts
+runs/
+
+# 샘플/산출 영상 (대용량 바이너리)
+*.mp4
+
+# OS
+.DS_Store
